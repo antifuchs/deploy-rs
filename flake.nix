@@ -58,9 +58,9 @@
             custom = base: activate: (pkgs.linkFarm "activation" [
               { name = "profile"; path = base; }
               {
-                name = base.name + "-activate-path";
+                name = "activate-script";
                 path = (pkgs.writeTextFile {
-                  name = base.name + "-activate-path";
+                  name = "activate-script";
                   text = ''
                     #!${pkgs.runtimeShell}
                     ${activate}
@@ -70,16 +70,8 @@
                 });
               }
               {
-                name = base.name + "-activate-rs";
-                path = (pkgs.writeTextFile {
-                  name = base.name + "-activate-rs";
-                  text = ''
-                    #!${pkgs.runtimeShell}
-                    exec ${self.defaultPackage."${system}"}/bin/activate "$@"
-                  '';
-                  executable = true;
-                  destination = "/activate-rs";
-                });
+                name = "activate-binary";
+                path = self.defaultPackage.${system};
               }
             ])
               # pkgs.buildEnv {
