@@ -55,30 +55,38 @@
             activate.custom;
 
           activate = rec {
-            custom = base: activate: (pkgs.linkFarm "activation" [{ name = "profile"; path = base; }])
+            custom = base: activate: (pkgs.linkFarm "activation" [
+              { name = "profile"; path = base; }
+              {
+                name = base.name + "-activate-path";
+                path = (pkgs.writeTextFile {
+                  name = base.name + "-activate-path";
+                  text = ''
+                    #!${pkgs.runtimeShell}
+                    ${activate}
+                  '';
+                  executable = true;
+                  destination = "/deploy-rs-activate";
+                });
+              }
+              {
+                name = base.name + "-activate-rs";
+                path = (pkgs.writeTextFile {
+                  name = base.name + "-activate-rs";
+                  text = ''
+                    #!${pkgs.runtimeShell}
+                    exec ${self.defaultPackage."${system}"}/bin/activate "$@"
+                  '';
+                  executable = true;
+                  destination = "/activate-rs";
+                });
+              }
+            ])
               # pkgs.buildEnv {
               #   name = ("activatable-" + base.name);
               #   paths = [
               #     base
 
-              #     (pkgs.writeTextFile {
-              #       name = base.name + "-activate-path";
-              #       text = ''
-              #         #!${pkgs.runtimeShell}
-              #         ${activate}
-              #       '';
-              #       executable = true;
-              #       destination = "/deploy-rs-activate";
-              #     })
-              #     (pkgs.writeTextFile {
-              #       name = base.name + "-activate-rs";
-              #       text = ''
-              #         #!${pkgs.runtimeShell}
-              #         exec ${self.defaultPackage."${system}"}/bin/activate "$@"
-              #       '';
-              #       executable = true;
-              #       destination = "/activate-rs";
-              #     })
               #   ];
               # }
             ;
