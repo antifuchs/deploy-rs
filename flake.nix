@@ -59,6 +59,7 @@
               name = ("activatable-" + base.name);
               paths = [
                 base
+                (pkgs.linkFarm [{ name = "activate-profile"; path = base; }])
                 (pkgs.writeTextFile {
                   name = base.name + "-activate-path";
                   text = ''
