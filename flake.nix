@@ -55,31 +55,33 @@
             activate.custom;
 
           activate = rec {
-            custom = base: activate: pkgs.buildEnv {
-              name = ("activatable-" + base.name);
-              paths = [
-                base
-                (pkgs.linkFarm "activation" [{ name = "profile"; path = base; }])
-                (pkgs.writeTextFile {
-                  name = base.name + "-activate-path";
-                  text = ''
-                    #!${pkgs.runtimeShell}
-                    ${activate}
-                  '';
-                  executable = true;
-                  destination = "/deploy-rs-activate";
-                })
-                (pkgs.writeTextFile {
-                  name = base.name + "-activate-rs";
-                  text = ''
-                    #!${pkgs.runtimeShell}
-                    exec ${self.defaultPackage."${system}"}/bin/activate "$@"
-                  '';
-                  executable = true;
-                  destination = "/activate-rs";
-                })
-              ];
-            };
+            custom = base: activate: (pkgs.linkFarm "activation" [{ name = "profile"; path = base; }])
+              # pkgs.buildEnv {
+              #   name = ("activatable-" + base.name);
+              #   paths = [
+              #     base
+
+              #     (pkgs.writeTextFile {
+              #       name = base.name + "-activate-path";
+              #       text = ''
+              #         #!${pkgs.runtimeShell}
+              #         ${activate}
+              #       '';
+              #       executable = true;
+              #       destination = "/deploy-rs-activate";
+              #     })
+              #     (pkgs.writeTextFile {
+              #       name = base.name + "-activate-rs";
+              #       text = ''
+              #         #!${pkgs.runtimeShell}
+              #         exec ${self.defaultPackage."${system}"}/bin/activate "$@"
+              #       '';
+              #       executable = true;
+              #       destination = "/activate-rs";
+              #     })
+              #   ];
+              # }
+            ;
 
             nixos = base: custom base.config.system.build.toplevel "$PROFILE/bin/switch-to-configuration switch";
 
