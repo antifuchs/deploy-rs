@@ -20,7 +20,7 @@ fn build_command(
 ) -> String {
     let mut self_activate_command = format!(
         "{}/activate-rs '{}' '{}' '{}' --temp-path {} --confirm-timeout {}",
-        closure, command, profile_path, closure, temp_path, confirm_timeout
+        closure, subcommand, profile_path, closure, temp_path, confirm_timeout
     );
 
     if magic_rollback {

@@ -5,10 +5,10 @@
 
 use clap::Clap;
 
-use tokio::fs;
 use tokio::process::Command;
 use tokio::sync::mpsc;
 use tokio::time::timeout;
+use tokio::{fs, net::UnixListener};
 
 use std::time::Duration;
 
@@ -167,30 +167,32 @@ pub enum ActivationConfirmationError {
     CreateWatcherError(notify::Error),
     #[error("Error forking process: {0}")]
     ForkError(i32),
-    #[error("Could not watch for activation sentinel: {0}")]
-    WatcherError(#[from] notify::Error),
+    #[error("Could not create activation sentinel: {0}")]
+    WatcherError(#[from] std::io::Error),
 }
 
 #[derive(Error, Debug)]
 pub enum DangerZoneError {
     #[error("Timeout elapsed for confirmation")]
     TimesUp,
-    #[error("inotify stream ended without activation confirmation")]
-    NoConfirmation,
-    #[error("inotify encountered an error: {0}")]
-    WatchError(notify::Error),
+    #[error("Unix domain socket listener encountered an error: {0}")]
+    WatchError(std::io::Error),
 }
 
-async fn danger_zone(
-    mut events: mpsc::Receiver<Result<(), notify::Error>>,
+async fn wait_for_confirmation(
+    listener: UnixListener,
     confirm_timeout: u16,
 ) -> Result<(), DangerZoneError> {
     info!("Waiting for confirmation event...");
 
-    match timeout(Duration::from_secs(confirm_timeout as u64), events.recv()).await {
-        Ok(Some(Ok(()))) => Ok(()),
-        Ok(Some(Err(e))) => Err(DangerZoneError::WatchError(e)),
-        Ok(None) => Err(DangerZoneError::NoConfirmation),
+    match timeout(
+        Duration::from_secs(confirm_timeout as u64),
+        listener.accept(),
+    )
+    .await
+    {
+        Ok(Ok(_)) => Ok(()),
+        Ok(Err(e)) => Err(DangerZoneError::WatchError(e)),
         Err(_) => Err(DangerZoneError::TimesUp),
     }
 }
@@ -210,29 +212,7 @@ pub async fn activation_confirmation(
             .map_err(ActivationConfirmationError::CreateConfirmDirError)?;
     }
 
-    fs::File::create(&lock_path)
-        .await
-        .map_err(ActivationConfirmationError::CreateConfirmDirError)?;
-
-    let (deleted, done) = mpsc::channel(1);
-    let mut watcher: RecommendedWatcher =
-        Watcher::new_immediate(move |res: Result<notify::event::Event, notify::Error>| {
-            let send_result = match res {
-                Ok(e) if e.kind == notify::EventKind::Remove(notify::event::RemoveKind::File) => {
-                    deleted.blocking_send(Ok(()))
-                }
-                Ok(_) => Ok(()), // ignore non-removal events
-                Err(e) => deleted.blocking_send(Err(e)),
-            };
-            if let Err(e) = send_result {
-                // We can't communicate our error, but panic-ing would
-                // be bad; let's write an error and trust that the
-                // activate function will realize we aren't sending
-                // data.
-                eprintln!("Could not send file system event to watcher: {}", e);
-            }
-        })?;
-    watcher.watch(lock_path, RecursiveMode::Recursive)?;
+    let listener = UnixListener::bind(&lock_path)?;
 
     if let fork::Fork::Child =
         fork::daemon(false, false).map_err(ActivationConfirmationError::ForkError)?
@@ -241,12 +221,12 @@ pub async fn activation_confirmation(
                 let rt = tokio::runtime::Runtime::new().unwrap();
 
                 rt.block_on(async move {
-                    if let Err(err) = danger_zone(done, confirm_timeout).await {
+                    if let Err(err) = wait_for_confirmation(listener, confirm_timeout).await {
                         if let Err(err) = deactivate(&profile_path).await {
                             good_panic!("Error de-activating due to another error in confirmation thread, oh no...: {}", err);
                         }
 
-                        good_panic!("Error in confirmation thread: {}", err);
+                        good_panic!("Error in confirmation: {}", err);
                     }
                 });
             })
@@ -254,9 +234,9 @@ pub async fn activation_confirmation(
             .unwrap();
 
         info!("Confirmation successful!");
+        std::process::exit(0);
     }
-
-    std::process::exit(0);
+    Ok(())
 }
 
 #[derive(Error, Debug)]
