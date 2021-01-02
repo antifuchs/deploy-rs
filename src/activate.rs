@@ -5,11 +5,11 @@
 
 use clap::Clap;
 
-use tokio::process::Command;
-use tokio::time::timeout;
 use tokio::{fs, net::UnixListener};
+use tokio::{io::AsyncReadExt, time::timeout};
+use tokio::{net::UnixStream, process::Command};
 
-use std::time::Duration;
+use std::{net::Shutdown, time::Duration};
 
 use std::path::Path;
 
@@ -186,7 +186,9 @@ async fn wait_for_confirmation(
     )
     .await
     {
-        Ok(Ok(_)) => Ok(()),
+        Ok(Ok((conn, _))) => Ok(conn
+            .shutdown(Shutdown::Both)
+            .map_err(DangerZoneError::WatchError)?),
         Ok(Err(e)) => Err(DangerZoneError::WatchError(e)),
         Err(_) => Err(DangerZoneError::TimesUp),
     }
@@ -326,15 +328,41 @@ pub async fn activate(
     Ok(())
 }
 
-#[tokio::main]
-async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    if std::env::var("DEPLOY_LOG").is_err() {
-        std::env::set_var("DEPLOY_LOG", "info");
+#[derive(Error, Debug)]
+pub enum ConfirmError {
+    #[error("Could not connect to activation socket: {0}")]
+    ConnectError(std::io::Error),
+
+    #[error("Did not get acknowledged by confirmation process: {0}")]
+    CouldNotRead(std::io::Error),
+}
+
+async fn confirm(
+    profile_path: String,
+    temp_path: String,
+    magic_rollback: bool,
+) -> Result<(), ConfirmError> {
+    let mut buf = [0; 1];
+    match UnixStream::connect(temp_path).await {
+        Err(err) => Err(ConfirmError::ConnectError(err)),
+        Ok(mut conn) => match conn.read(&mut buf[..]).await {
+            Err(e) => Err(ConfirmError::CouldNotRead(e)),
+            Ok(_) => Ok(()),
+        },
     }
+}
 
-    pretty_env_logger::init_custom_env("DEPLOY_LOG");
+#[derive(Error, Debug)]
+enum CommandError {
+    #[error("Could not activate: {0}")]
+    CanNotActivate(#[from] ActivateError),
 
-    if let Err(err) = match Opts::parse() {
+    #[error("Could not confirm deployment; you may have to roll back yourself: {0}")]
+    CanNotConfirm(#[from] ConfirmError),
+}
+
+async fn command(cmd: Opts) -> Result<(), CommandError> {
+    match cmd {
         Opts::Activate(opts) => {
             activate(
                 opts.profile_path,
@@ -344,16 +372,27 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 opts.confirm_timeout,
                 opts.magic_rollback,
             )
-            .await
+            .await?;
         }
         Opts::Confirm(opts) => {
             if !opts.magic_rollback {
                 good_panic!("Trying to confirm a deployment that should not use magic rollback");
             }
-            todo!("Actually confirm the deployment");
-            Ok(())
+            confirm(opts.profile_path, opts.temp_path, opts.magic_rollback).await?;
         }
-    } {
+    }
+    Ok(())
+}
+
+#[tokio::main]
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    if std::env::var("DEPLOY_LOG").is_err() {
+        std::env::set_var("DEPLOY_LOG", "info");
+    }
+
+    pretty_env_logger::init_custom_env("DEPLOY_LOG");
+
+    if let Err(err) = command(Opts::parse()).await {
         good_panic!("{}", err);
     }
 
