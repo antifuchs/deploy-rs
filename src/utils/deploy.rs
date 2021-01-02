@@ -8,7 +8,8 @@ use tokio::process::Command;
 
 use thiserror::Error;
 
-fn build_activate_command(
+fn build_command(
+    subcommand: &str,
     sudo: &Option<String>,
     profile_path: &str,
     closure: &str,
@@ -18,8 +19,8 @@ fn build_activate_command(
     magic_rollback: bool,
 ) -> String {
     let mut self_activate_command = format!(
-        "{}/activate-rs '{}' '{}' --temp-path {} --confirm-timeout {}",
-        closure, profile_path, closure, temp_path, confirm_timeout
+        "{}/activate-rs '{}' '{}' '{}' --temp-path {} --confirm-timeout {}",
+        closure, command, profile_path, closure, temp_path, confirm_timeout
     );
 
     if magic_rollback {
@@ -49,7 +50,8 @@ fn test_activation_command_builder() {
     let magic_rollback = true;
 
     assert_eq!(
-        build_activate_command(
+        build_command(
+            "activate",
             &sudo,
             profile_path,
             closure,
@@ -58,7 +60,22 @@ fn test_activation_command_builder() {
             confirm_timeout,
             magic_rollback
         ),
-        "sudo -u test /nix/store/blah/etc/activate-rs '/blah/profiles/test' '/nix/store/blah/etc' --temp-path /tmp --confirm-timeout 30 --magic-rollback --auto-rollback"
+        "sudo -u test /nix/store/blah/etc/activate-rs 'activate' '/blah/profiles/test' '/nix/store/blah/etc' --temp-path /tmp --confirm-timeout 30 --magic-rollback --auto-rollback"
+            .to_string(),
+    );
+
+    assert_eq!(
+        build_command(
+            "confirm",
+            &sudo,
+            profile_path,
+            closure,
+            auto_rollback,
+            temp_path,
+            confirm_timeout,
+            magic_rollback
+        ),
+        "sudo -u test /nix/store/blah/etc/activate-rs 'confirm' '/blah/profiles/test' '/nix/store/blah/etc' --temp-path /tmp --confirm-timeout 30 --magic-rollback --auto-rollback"
             .to_string(),
     );
 }
@@ -99,7 +116,8 @@ pub async fn deploy_profile(
 
     let auto_rollback = deploy_data.merged_settings.auto_rollback.unwrap_or(true);
 
-    let self_activate_command = build_activate_command(
+    let self_activate_command = build_command(
+        "activate",
         &deploy_defs.sudo,
         &deploy_defs.profile_path,
         &deploy_data.profile.profile_settings.path,
@@ -143,17 +161,18 @@ pub async fn deploy_profile(
 
         let mut c = Command::new("ssh");
         let mut ssh_confirm_command = c.arg(format!("ssh://{}@{}", deploy_defs.ssh_user, hostname));
-
+        let confirm_command = build_command(
+            "confirm",
+            &deploy_defs.sudo,
+            &deploy_defs.profile_path,
+            &deploy_data.profile.profile_settings.path,
+            auto_rollback,
+            &temp_path,
+            confirm_timeout,
+            magic_rollback,
+        );
         for ssh_opt in &deploy_data.merged_settings.ssh_opts {
             ssh_confirm_command = ssh_confirm_command.arg(ssh_opt);
-        }
-
-        let lock_hash = &deploy_data.profile.profile_settings.path["/nix/store/".len()..];
-        let lock_path = format!("{}/deploy-rs-canary-{}", temp_path, lock_hash);
-
-        let mut confirm_command = format!("rm {}", lock_path);
-        if let Some(sudo_cmd) = &deploy_defs.sudo {
-            confirm_command = format!("{} {}", sudo_cmd, confirm_command);
         }
 
         debug!(

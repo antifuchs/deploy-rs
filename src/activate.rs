@@ -31,7 +31,13 @@ mod utils;
 /// Activation portion of the simple Rust Nix deploy tool
 #[derive(Clap, Debug)]
 #[clap(version = "1.0", author = "Serokell <https://serokell.io/>")]
-struct Opts {
+enum Opts {
+    Activate(Options),
+    Confirm(Options),
+}
+
+#[derive(Clap, Debug)]
+struct Options {
     profile_path: String,
     closure: String,
 
@@ -353,20 +359,27 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     pretty_env_logger::init_custom_env("DEPLOY_LOG");
 
-    let opts: Opts = Opts::parse();
-
-    match activate(
-        opts.profile_path,
-        opts.closure,
-        opts.auto_rollback,
-        opts.temp_path,
-        opts.confirm_timeout,
-        opts.magic_rollback,
-    )
-    .await
-    {
-        Ok(()) => (),
-        Err(err) => good_panic!("{}", err),
+    if let Err(err) = match Opts::parse() {
+        Opts::Activate(opts) => {
+            activate(
+                opts.profile_path,
+                opts.closure,
+                opts.auto_rollback,
+                opts.temp_path,
+                opts.confirm_timeout,
+                opts.magic_rollback,
+            )
+            .await
+        }
+        Opts::Confirm(opts) => {
+            if !opts.magic_rollback {
+                good_panic!("Trying to confirm a deployment that should not use magic rollback");
+            }
+            todo!("Actually confirm the deployment");
+            Ok(())
+        }
+    } {
+        good_panic!("{}", err);
     }
 
     Ok(())
