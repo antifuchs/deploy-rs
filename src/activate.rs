@@ -6,15 +6,12 @@
 use clap::Clap;
 
 use tokio::process::Command;
-use tokio::sync::mpsc;
 use tokio::time::timeout;
 use tokio::{fs, net::UnixListener};
 
 use std::time::Duration;
 
 use std::path::Path;
-
-use notify::{RecommendedWatcher, RecursiveMode, Watcher};
 
 use thiserror::Error;
 
@@ -163,8 +160,6 @@ pub enum ActivationConfirmationError {
     CreateConfirmDirError(std::io::Error),
     #[error("Failed to create activation confirmation file: {0}")]
     CreateConfirmFileError(std::io::Error),
-    #[error("Failed to create file system watcher instance: {0}")]
-    CreateWatcherError(notify::Error),
     #[error("Error forking process: {0}")]
     ForkError(i32),
     #[error("Could not create activation sentinel: {0}")]
