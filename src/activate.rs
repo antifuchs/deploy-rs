@@ -15,6 +15,8 @@ use std::path::Path;
 
 use thiserror::Error;
 
+use sha2::Digest;
+
 extern crate pretty_env_logger;
 #[macro_use]
 extern crate log;
@@ -194,9 +196,22 @@ async fn wait_for_confirmation(
     }
 }
 
-fn lock_path(temp_path: String, closure: String) -> String {
+fn lock_path(temp_path: &str, closure: &str) -> String {
     let lock_hash = &closure["/nix/store/".len()..];
-    format!("{}/deploy-rs-canary-{}", temp_path, lock_hash)
+    format!(
+        "{}/deploy-rs-canary-{}",
+        temp_path,
+        base64::encode_config(sha2::Sha256::digest(lock_hash.as_bytes()), base64::BCRYPT)
+    )
+}
+
+#[test]
+fn test_lock_path() {
+    assert_eq!(
+        "/tmp/deploy-rs-canary-Si9hwxqBwllGONnJPInHKwGGdwfRGYHarAT3Nw.hQ7u",
+        lock_path("/tmp",
+                  "/nix/store/jsi0s2p5ik24f8dfrlvjsvrwrfh6k78x-activatable-nixos-system-foobar-21.03.20201227.b8f2c6f")
+    );
 }
 
 pub async fn activation_confirmation(
@@ -205,7 +220,7 @@ pub async fn activation_confirmation(
     confirm_timeout: u16,
     closure: String,
 ) -> Result<(), ActivationConfirmationError> {
-    let lock_path = lock_path(temp_path, closure);
+    let lock_path = lock_path(&temp_path, &closure);
 
     if let Some(parent) = Path::new(&lock_path).parent() {
         fs::create_dir_all(parent)
@@ -343,7 +358,7 @@ pub enum ConfirmError {
 
 async fn confirm(temp_path: String, closure: String) -> Result<(), ConfirmError> {
     let mut buf = [0; 1];
-    match UnixStream::connect(lock_path(temp_path, closure)).await {
+    match UnixStream::connect(lock_path(&temp_path, &closure)).await {
         Err(err) => Err(ConfirmError::ConnectError(err)),
         Ok(mut conn) => match conn.read(&mut buf[..]).await {
             Err(e) => Err(ConfirmError::CouldNotRead(e)),
