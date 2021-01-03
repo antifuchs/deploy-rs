@@ -5,8 +5,12 @@
 
 use clap::Clap;
 
-use tokio::{fs, net::UnixListener};
-use tokio::{io::AsyncReadExt, time::timeout};
+use tokio::{
+    fs,
+    io::{AsyncWriteExt, BufStream},
+    net::UnixListener,
+};
+use tokio::{io::AsyncBufReadExt, time::timeout};
 use tokio::{net::UnixStream, process::Command};
 
 use std::{net::Shutdown, time::Duration};
@@ -14,8 +18,6 @@ use std::{net::Shutdown, time::Duration};
 use std::path::Path;
 
 use thiserror::Error;
-
-use sha2::Digest;
 
 extern crate pretty_env_logger;
 #[macro_use]
@@ -177,32 +179,39 @@ pub enum DangerZoneError {
 }
 
 async fn wait_for_confirmation(
+    socket_path: Option<&str>,
     listener: UnixListener,
     confirm_timeout: u16,
 ) -> Result<(), DangerZoneError> {
     info!("Waiting for confirmation event...");
 
-    match timeout(
+    let confirmation = match timeout(
         Duration::from_secs(confirm_timeout as u64),
         listener.accept(),
     )
     .await
     {
-        Ok(Ok((conn, _))) => Ok(conn
-            .shutdown(Shutdown::Both)
-            .map_err(DangerZoneError::WatchError)?),
+        Ok(Ok((mut conn, _))) => {
+            conn.write(b"OK\n")
+                .await
+                .map_err(DangerZoneError::WatchError)?;
+            Ok(conn
+                .shutdown(Shutdown::Both)
+                .map_err(DangerZoneError::WatchError)?)
+        }
         Ok(Err(e)) => Err(DangerZoneError::WatchError(e)),
         Err(_) => Err(DangerZoneError::TimesUp),
+    };
+    if let Some(Err(e)) = socket_path.map(std::fs::remove_file) {
+        info!("Could not clean up confirmation listening socket: {}", e);
     }
+    confirmation
 }
 
 fn lock_path(temp_path: &str, closure: &str) -> String {
-    let lock_hash = &closure["/nix/store/".len()..];
-    format!(
-        "{}/deploy-rs-canary-{}",
-        temp_path,
-        base64::encode_config(sha2::Sha256::digest(lock_hash.as_bytes()), base64::BCRYPT)
-    )
+    let store_len = "/nix/store/".len();
+    let lock_hash = &closure[store_len..store_len + 32];
+    format!("{}/deploy-confirm-{}.sock", temp_path, lock_hash)
 }
 
 #[test]
@@ -210,7 +219,7 @@ fn test_lock_path() {
     let path = lock_path("/tmp",
                          "/nix/store/jsi0s2p5ik24f8dfrlvjsvrwrfh6k78x-activatable-nixos-system-foobarbazquuuuuuuux-21.03.20201227.b8f2c6f");
     assert_eq!(
-        "/tmp/deploy-rs-canary-Si9hwxqBwllGONnJPInHKwGGdwfRGYHarAT3Nw.hQ7u",
+        "/tmp/deploy-confirm-jsi0s2p5ik24f8dfrlvjsvrwrfh6k78x.sock",
         path
     );
     // Socket path names must be shorter than this struct
@@ -242,7 +251,7 @@ pub async fn activation_confirmation(
                 let rt = tokio::runtime::Runtime::new().unwrap();
 
                 rt.block_on(async move {
-                    if let Err(err) = wait_for_confirmation(listener, confirm_timeout).await {
+                    if let Err(err) = wait_for_confirmation(Some(&lock_path), listener, confirm_timeout).await {
                         if let Err(err) = deactivate(&profile_path).await {
                             good_panic!("Error de-activating due to another error in confirmation thread, oh no...: {}", err);
                         }
@@ -362,13 +371,16 @@ pub enum ConfirmError {
 }
 
 async fn confirm(temp_path: String, closure: String) -> Result<(), ConfirmError> {
-    let mut buf = [0; 1];
+    let mut buf = String::new();
     match UnixStream::connect(lock_path(&temp_path, &closure)).await {
         Err(err) => Err(ConfirmError::ConnectError(err)),
-        Ok(mut conn) => match conn.read(&mut buf[..]).await {
-            Err(e) => Err(ConfirmError::CouldNotRead(e)),
-            Ok(_) => Ok(()),
-        },
+        Ok(conn) => {
+            let mut br = BufStream::new(conn);
+            match br.read_line(&mut buf).await {
+                Err(e) => Err(ConfirmError::CouldNotRead(e)),
+                Ok(_) => Ok(()),
+            }
+        }
     }
 }
 
