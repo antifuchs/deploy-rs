@@ -207,11 +207,16 @@ fn lock_path(temp_path: &str, closure: &str) -> String {
 
 #[test]
 fn test_lock_path() {
+    let path = lock_path("/tmp",
+                         "/nix/store/jsi0s2p5ik24f8dfrlvjsvrwrfh6k78x-activatable-nixos-system-foobarbazquuuuuuuux-21.03.20201227.b8f2c6f");
     assert_eq!(
         "/tmp/deploy-rs-canary-Si9hwxqBwllGONnJPInHKwGGdwfRGYHarAT3Nw.hQ7u",
-        lock_path("/tmp",
-                  "/nix/store/jsi0s2p5ik24f8dfrlvjsvrwrfh6k78x-activatable-nixos-system-foobar-21.03.20201227.b8f2c6f")
+        path
     );
+    // Socket path names must be shorter than this struct
+    // field. (https://docs.rs/libc/0.2.81/libc/struct.sockaddr_un.html#structfield.sun_path)
+    // - it's 108 on Linux and 104 on macOS.
+    assert!(path.len() < 104);
 }
 
 pub async fn activation_confirmation(
