@@ -7,13 +7,13 @@ use clap::Clap;
 
 use tokio::{
     fs,
-    io::{AsyncWriteExt, BufStream},
-    net::UnixListener,
+    io::{AsyncBufReadExt, AsyncWriteExt, BufStream},
+    net::{UnixListener, UnixStream},
+    process::Command,
+    time::timeout,
 };
-use tokio::{io::AsyncBufReadExt, time::timeout};
-use tokio::{net::UnixStream, process::Command};
 
-use std::{net::Shutdown, time::Duration};
+use std::time::Duration;
 
 use std::path::Path;
 
@@ -195,8 +195,8 @@ async fn wait_for_confirmation(
             conn.write(b"OK\n")
                 .await
                 .map_err(DangerZoneError::WatchError)?;
-            Ok(conn
-                .shutdown(Shutdown::Both)
+            Ok(AsyncWriteExt::shutdown(&mut conn)
+                .await
                 .map_err(DangerZoneError::WatchError)?)
         }
         Ok(Err(e)) => Err(DangerZoneError::WatchError(e)),
