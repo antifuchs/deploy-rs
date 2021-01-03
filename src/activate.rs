@@ -191,14 +191,9 @@ async fn wait_for_confirmation(
     )
     .await
     {
-        Ok(Ok((mut conn, _))) => {
-            conn.write(b"OK\n")
-                .await
-                .map_err(DangerZoneError::WatchError)?;
-            Ok(AsyncWriteExt::shutdown(&mut conn)
-                .await
-                .map_err(DangerZoneError::WatchError)?)
-        }
+        Ok(Ok((mut conn, _))) => Ok(AsyncWriteExt::shutdown(&mut conn)
+            .await
+            .map_err(DangerZoneError::WatchError)?),
         Ok(Err(e)) => Err(DangerZoneError::WatchError(e)),
         Err(_) => Err(DangerZoneError::TimesUp),
     };
@@ -374,13 +369,7 @@ async fn confirm(temp_path: String, closure: String) -> Result<(), ConfirmError>
     let mut buf = String::new();
     match UnixStream::connect(lock_path(&temp_path, &closure)).await {
         Err(err) => Err(ConfirmError::ConnectError(err)),
-        Ok(conn) => {
-            let mut br = BufStream::new(conn);
-            match br.read_line(&mut buf).await {
-                Err(e) => Err(ConfirmError::CouldNotRead(e)),
-                Ok(_) => Ok(()),
-            }
-        }
+        Ok(_conn) => Ok(()),
     }
 }
 
