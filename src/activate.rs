@@ -194,14 +194,18 @@ async fn wait_for_confirmation(
     }
 }
 
+fn lock_path(temp_path: String, closure: String) -> String {
+    let lock_hash = &closure["/nix/store/".len()..];
+    format!("{}/deploy-rs-canary-{}", temp_path, lock_hash)
+}
+
 pub async fn activation_confirmation(
     profile_path: String,
     temp_path: String,
     confirm_timeout: u16,
     closure: String,
 ) -> Result<(), ActivationConfirmationError> {
-    let lock_hash = &closure["/nix/store/".len()..];
-    let lock_path = format!("{}/deploy-rs-canary-{}", temp_path, lock_hash);
+    let lock_path = lock_path(temp_path, closure);
 
     if let Some(parent) = Path::new(&lock_path).parent() {
         fs::create_dir_all(parent)
@@ -337,13 +341,9 @@ pub enum ConfirmError {
     CouldNotRead(std::io::Error),
 }
 
-async fn confirm(
-    profile_path: String,
-    temp_path: String,
-    magic_rollback: bool,
-) -> Result<(), ConfirmError> {
+async fn confirm(temp_path: String, closure: String) -> Result<(), ConfirmError> {
     let mut buf = [0; 1];
-    match UnixStream::connect(temp_path).await {
+    match UnixStream::connect(lock_path(temp_path, closure)).await {
         Err(err) => Err(ConfirmError::ConnectError(err)),
         Ok(mut conn) => match conn.read(&mut buf[..]).await {
             Err(e) => Err(ConfirmError::CouldNotRead(e)),
@@ -378,7 +378,7 @@ async fn command(cmd: Opts) -> Result<(), CommandError> {
             if !opts.magic_rollback {
                 good_panic!("Trying to confirm a deployment that should not use magic rollback");
             }
-            confirm(opts.profile_path, opts.temp_path, opts.magic_rollback).await?;
+            confirm(opts.temp_path, opts.closure).await?;
         }
     }
     Ok(())
